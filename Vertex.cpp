@@ -3,10 +3,73 @@
 #include "cuda_profiler_api.h"
 
 
-#include "vertexQuadraticEnergy.h"
-#include "selfPropelledCellVertexDynamics.h"
-#include "brownianParticleDynamics.h"
-#include "simpleVertexDatabase.h"
+#include "vertexQuadraticEnergyWithTension.h"
+#include "EnergyMinimizerFIRE2D.h"
+#include "DatabaseNetCDFAVM.h"
+#include "logEquilibrationStateWriter.h"
+#include "analysisPackage.h"
+#include <iostream>
+#include <vector>
+#include <memory>
+#include <ctime>
+#include <random>
+#include <cmath>
+#include <stdio.h>
+#include <fstream>
+#include <math.h>
+#include <numeric>
+#include <cmath>
+
+//! A function of convenience for setting FIRE parameters
+void setFIREParameters(shared_ptr<EnergyMinimizerFIRE> emin, double deltaT, double alphaStart,
+        double deltaTMax, double deltaTInc, double deltaTDec, double alphaDec, int nMin,
+        double forceCutoff)
+    {
+    emin->setDeltaT(deltaT);
+    emin->setAlphaStart(alphaStart);
+    emin->setDeltaTMax(deltaTMax);
+    emin->setDeltaTInc(deltaTInc);
+    emin->setDeltaTDec(deltaTDec);
+    emin->setAlphaDec(alphaDec);
+    emin->setNMin(nMin);
+    emin->setForceCutoff(forceCutoff);
+    };
+
+// Function to print the contents of a std::vector<std::vector<int>>
+void printVectorOfVectors(const std::vector<std::vector<int>>& vec) {
+    for (size_t i = 0; i < vec.size(); ++i) {
+        std::cout << "Cell " << i << " neighbors: ";
+        for (size_t j = 0; j < vec[i].size(); ++j) {
+            std::cout << vec[i][j] << " ";
+        }
+        std::cout << std::endl;
+    }
+}
+
+
+double calculate_mean(const std::vector<double>& data) {
+    if (data.empty()) {
+        return 0.0; // Handle empty data case
+    }
+
+    double sum = std::accumulate(data.begin(), data.end(), 0.0);
+    return sum / data.size();
+}
+
+double calculate_std_dev(const std::vector<double>& data) {
+    if (data.size() < 2) {
+        return 0.0; // Handle cases with insufficient data
+    }
+
+    double mean = calculate_mean(data);
+    double sum_sq_diff = 0.0;
+
+    for (const double& value : data) {
+        sum_sq_diff += pow(value - mean, 2);
+    }
+
+    return sqrt(sum_sq_diff / (data.size())); //  standard deviation
+}
 /*!
 This file compiles to produce an executable that can be used to reproduce the timing information
 for the 2D AVM model found in the "cellGPU" paper, using the following parameters:
@@ -23,19 +86,67 @@ vertex model's computeForces() funciton right before saving a state.
 */
 int main(int argc, char*argv[])
 {
-    int numpts = 200; //number of cells
+    clock_t t1, t2; // clocks for timing information
+    int numpts = 500; //number of cells
     int USE_GPU = 0; //0 or greater uses a gpu, any negative number runs on the cpu
-    int tSteps = 5; //number of time steps to run after initialization
-    int initSteps = 1; //number of initialization steps
+    int tSteps = 1000; //number of time steps to run after initialization
+    int initSteps = 5000; //number of initialization steps
+    double p0 = 4.0;  //the preferred perimeter -> not used
+    double NT = 0.4; 
+    int Nc = round(NT*numpts);
+    double KA = 100;
+    double KP = 1.0;
+    //double alpha = 1.0; //actin alpha not fire alpha
+    double a0 = 1.0;  // the preferred area -> not used
+    //FIRE Parameters
+    double dt = 0.01/KA; //the (initial) time step size
+    double alphaStart = 0.99; //firealpha also max alpha
+    double deltaTMax = 0.1;  // maximum time step size
+    double deltaTInc= 1.01; // time step size increase factor
+    double deltaTDec = 0.99; // time step size decrease factor
+    double alphaDec = 0.9; // fire alpha decrease factor
+    double nMin = 4; // minimum number of iterations before increasing time step size ////was 8
+    double forceCutoff = 1e-20; 
 
-    double dt = 0.01; //the time step size
-    double p0 = 4.0;  //the preferred perimeter
-    double a0 = 1.0;  // the preferred area
-    double v0 = 0.05;  // the self-propulsion
-    double Dr = 1.0;  //the rotational diffusion constant of the cell directors
+    double v0 = 0.00;  // the self-propulsion
+    double Dr = 0.0;  //the rotational diffusion constant of the cell directors
     int program_switch = 0; //various settings control output
+    int writestep =1; //how often to write out the database
 
     int c;
+    //generate areas and perimeters for the cells
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    float Ap, bs, k, theta, sum; //parameters for the cell preferences
+    float areas[numpts];
+    float perimeters[numpts];
+    Ap = 0.4; 
+    bs = std::sqrt(numpts); 
+    k = std::pow(1/Ap,2); 
+    theta = std::pow(Ap/bs,2);
+    std::gamma_distribution<> d(k,theta);
+    // <random> has a gamma distribution
+    sum = 0; 
+    for (int i=0; i<numpts; ++i)
+        {
+        areas[i] = d(gen);
+        sum += areas[i];
+        }
+    double newsum = 0; 
+    for (int i=0; i<numpts; ++i)
+        {
+        areas[i] /= (sum/numpts);
+        perimeters[i] = 2 * std::sqrt(M_PI * areas[i]);
+        newsum += areas[i];
+        }
+    char buffer[100];
+    std::sprintf(buffer, "areas%dp%d.txt", static_cast<int>(std::floor(Ap)), static_cast<int>(std::fmod(std::floor(Ap * 1000), 1000)));
+    std::ofstream areaFile(buffer);
+    for (int i = 0; i < numpts; ++i) {
+            areaFile << areas[i] << "\n";
+        }
+        areaFile.close();
+
     while((c=getopt(argc,argv,"n:g:m:s:r:a:i:v:b:x:y:z:p:t:e:d:")) != -1)
         switch(c)
         {
@@ -60,7 +171,6 @@ int main(int argc, char*argv[])
             default:
                        abort();
         };
-    clock_t t1,t2; //clocks for timing information
     bool reproducible = true; // if you want random numbers with a more random seed each run, set this to false
     //check to see if we should run on a GPU
     bool initializeGPU = true;
@@ -70,95 +180,246 @@ int main(int argc, char*argv[])
 
     //possibly save output in netCDF format
     char dataname[256];
-    sprintf(dataname,"./test_p%.3f.nc",p0);
-    int Nvert = 2*numpts;
-    simpleVertexDatabase ncdat(Nvert,dataname,fileMode::replace);
+        int Nvert = 2*numpts;
+    
 
     bool runSPV = false;//setting this to true will relax the random cell positions to something more uniform before running vertex model dynamics
+    ofstream myfile; 
 
-    //We will define two potential equations of motion, and choose which later on.
-    //define an equation of motion object...here for self-propelled cells
-    EOMPtr spp = make_shared<selfPropelledCellVertexDynamics>(numpts,Nvert);
-    //the next lines declare a potential brownian dynamics scheme at some targe temperature
-    shared_ptr<brownianParticleDynamics> bd = make_shared<brownianParticleDynamics>(Nvert);
-    bd->setT(v0);
-    //define a vertex model configuration with a quadratic energy functional
-    shared_ptr<VertexQuadraticEnergy> avm = make_shared<VertexQuadraticEnergy>(numpts,1.0,4.0,reproducible,runSPV,initializeGPU);
-    //set the cell preferences to uniformly have A_0 = 1, P_0 = p_0
-    avm->setCellPreferencesUniform(1.0,p0);
-    //set the cell activity to have D_r = 1. and a given v_0
-    avm->setv0Dr(v0,1.0);
-    //when an edge gets less than this long, perform a simple T1 transition
-    avm->setT1Threshold(0.1);
+    // Open a file stream to append results
+    /*std::ofstream resultsFile("adhesion_vs_meanEdgeTension.txt", std::ios::app);
+    if (!resultsFile.is_open()) {
+        std::cerr << "Unable to open file for writing" << std::endl;
+        return 1;
+    }
 
-    vector<int> vi(3*Nvert);
-    vector<int> vf(3*Nvert);
-    {
-    ArrayHandle<int> vcn(avm->vertexCellNeighbors);
-    for (int ii = 0; ii < 3*Nvert; ++ii)
-        vi[ii]=vcn.data[ii];
-    };
+    // Open a file stream to append results
+    std::ofstream cnFile("adhesion_vs_cn.txt", std::ios::app);
+    if (!cnFile.is_open()) {
+        std::cerr << "Unable to open file for writing" << std::endl;
+        return 1;
+    }
 
-    //combine the equation of motion and the cell configuration in a "Simulation"
-    SimulationPtr sim = make_shared<Simulation>();
-    sim->setConfiguration(avm);
-    sim->addUpdater(bd,avm);
-    //one could have written "sim->addUpdater(spp,avm);" to use the active cell dynamics instead
-
-    //set the time step size
-    sim->setIntegrationTimestep(dt);
-    //initialize Hilbert-curve sorting... can be turned off by commenting out this line or seting the argument to a negative number
-//    sim->setSortPeriod(initSteps/10);
-    //set appropriate CPU and GPU flags
-    sim->setCPUOperation(!initializeGPU);
-    sim->setReproducible(reproducible);
-
-    avm->reportMeanVertexForce();
-
-            ncdat.writeState(avm);
-    //perform some initial time steps. If program_switch < 0, save periodically to a netCDF database
-    for (int timestep = 0; timestep < initSteps+1; ++timestep)
+    // Open a file stream to append results
+    std::ofstream eccentricityFile("adhesion_vs_e.txt", std::ios::app);
+    if (!cnFile.is_open()) {
+        std::cerr << "Unable to open file for writing" << std::endl;
+        return 1;
+    }
+*/
+    for (double forcexponent = 0.1; forcexponent <= 1.0; forcexponent += 0.05) {
+        // Sweep through adhesion parameters from 0 to 0.3 with an increment of 0.01
+    for (double adhesion = 0.00; adhesion <= 2.50; adhesion += 0.05) {
+        // Initialize the vertex model
+        std::clock_t start = std::clock();
+    // Initialize the system with vertex positions
+    shared_ptr<VertexQuadraticEnergyWithTension> vertexModel = make_shared<VertexQuadraticEnergyWithTension>(numpts, 1.0/numpts, 2.3094/numpts, reproducible, initializeGPU);
+    vector<int> types(numpts,0);
+        for (int ii = 0; ii < numpts; ++ii)
         {
-        sim->performTimestep();
-        if(program_switch <0 && timestep%((int)(100/dt))==0)
-            {
-            cout << timestep << endl;
-            //ncdat.writeState(avm);
-            };
-        };
-    avm->reportMeanVertexForce();
-            ncdat.writeState(avm);
+        types[ii]=ii; //each cell type need be different for the tension to be applied
+        }
+    vertexModel->setCellType(types);
+    vertexModel->setSurfaceTension(adhesion);
+    vertexModel->setForceExponent(forcexponent);
+    vertexModel->setUseSurfaceTension(true); //set the flag to use the surface tension
+    vertexModel->setModuliUniform(KA, KP); //first number is KA and second is KP
 
-    //run for additional timesteps, and record timing information. Save frames to a database if desired
-    cudaProfilerStart();
-    t1=clock();
-    for (int timestep = 0; timestep < tSteps; ++timestep)
-        {
-            ncdat.writeState(avm);
-        sim->performTimestep();
-        if(program_switch <0 && timestep%((int)(100/dt))==0)
-            {
-            cout << timestep << endl;
-            ncdat.writeState(avm);
-            };
-        };
-    cudaProfilerStop();
-
-    t2=clock();
-    cout << "timestep time per iteration currently at " <<  (t2-t1)/(double)CLOCKS_PER_SEC/tSteps << endl << endl;
-    avm->reportMeanVertexForce();
-    cout << "Mean q = " << avm->reportq() << endl;
+    std::vector<int> cellneighbors = vertexModel->reportCellNeighborCounts();
 
     /*
-    {
-    ArrayHandle<int> vcn(avm->vertexCellNeighbors);
-    for (int ii = 0; ii < 3*Nvert; ++ii)
-        vf[ii]=vcn.data[ii];
-    };
-    for (int ii = 0; ii < 100;++ii)
-        printf("%i\t",vf[ii]-vi[ii]);
-    cout << endl;
+    //set a certain percentage of cells to have areas that go as their topologies
+    std::vector<int> topind;
+    for(int i=0; i<Nc; i++) topind.push_back(1);
+    for(int i=Nc; i<numpts; i++) topind.push_back(0);
+    std::random_shuffle(topind.begin(),topind.end());
+
+    std::vector<int> inei;
+    std::vector<int> inds;
+    for (int i=0;i<cellneighbors.size();i++) inds.push_back(i);
+    //This is a bad sorting algorithm, do not judge me
+    while(inds.size()){
+    int lowest=0;
+    for (int i=0;i<inds.size();i++) if(cellneighbors[inds[lowest]]>cellneighbors[inds[i]]) lowest=i;
+    inei.push_back(lowest);
+    inds.erase(inds.begin()+lowest);
+    }
+    
+    std::vector<float> rarea, sarea;
+    for(int i=0; i<numpts; i++) sarea.push_back(areas[i]);
+
+    std::sort(sarea.begin(),sarea.end());
+    for(int i=0; i<numpts; i++){
+    if(topind[i]) areas[inei[i]]=sarea[i];
+    else rarea.push_back(sarea[i]);
+    }
+    std::random_shuffle(rarea.begin(),rarea.end());
+    for (int i=0; i<numpts; i++) if(!topind[i]) areas[inei[i]]=rarea[i];
     */
+    //set cell areas and perimeters to array defined via gamma distribution
+    std::vector<double2> AreaPeriPreferences(numpts);
+    for (int i = 0; i < numpts; ++i) {
+        AreaPeriPreferences[i] = {areas[i], perimeters[i]};
+    }
+
+        // Save initial cell neighbors
+
+        std::sprintf(buffer, "initialneighbors_g%dp%d.txt", static_cast<int>(std::floor(adhesion)), static_cast<int>(std::fmod(std::floor(adhesion * 1000), 1000)));
+        std::ofstream initialNeighborsFile(buffer);
+        for (int i = 0; i < numpts; ++i) {
+            initialNeighborsFile << cellneighbors[i] << "\n" << std::endl;
+        }
+        initialNeighborsFile.close();
+
+        // Save area preferences
+        std::sprintf(buffer, "areapreference_g%dp%d.txt", static_cast<int>(std::floor(adhesion)), static_cast<int>(std::fmod(std::floor(adhesion * 1000), 1000)));
+        std::ofstream areaPreferenceFile(buffer);
+        for (int i = 0; i < numpts; ++i) {
+            areaPreferenceFile << areas[i] << "\n";
+        }
+        areaPreferenceFile.close();
+
+        // Save perimeter preferences
+        std::sprintf(buffer, "perimeterpreference_g%dp%d.txt", static_cast<int>(std::floor(adhesion)), static_cast<int>(std::fmod(std::floor(adhesion * 1000), 1000)));
+        std::ofstream perimeterPreferenceFile(buffer);
+        for (int i = 0; i < numpts; ++i) {
+            perimeterPreferenceFile << perimeters[i] << "\n";
+        }
+        perimeterPreferenceFile.close();
+
+    vertexModel->setCellPreferences(AreaPeriPreferences);
+    //when an edge gets less than this long, perform a simple T1 transition
+    vertexModel->setT1Threshold(0.01);
+
+    // Set the initial positions to be within [0, 1] for both x and y directions
+    //vertexModel->setRectangularUnitCell(1.0,1.0);
+    vertexModel->setRectangularUnitCell(sqrt(newsum),sqrt(newsum));
+    
+    // Use the FIRE algorithm to find a minimal energy state
+    shared_ptr<EnergyMinimizerFIRE> fireMinimizer = make_shared<EnergyMinimizerFIRE>(vertexModel);
+
+    SimulationPtr sim = make_shared<Simulation>();
+    sim->setConfiguration(vertexModel);
+    sim->addUpdater(fireMinimizer,vertexModel);
+    sim->setIntegrationTimestep(dt);
+//        if(initSteps > 0)
+//           sim->setSortPeriod(initSteps/10);
+        //set appropriate CPU and GPU flags
+    sim->setCPUOperation(!initializeGPU);
+
+    vertexModel->computeGeometry();
+    printf("minimized value of q = %f\n",vertexModel->reportq());
+    double meanQ = vertexModel->reportq();
+    double varQ = vertexModel->reportVarq();
+    double2 variances = vertexModel->reportVarAP();
+    printf("Cell <q> = %f\t Var(p) = %g\n",meanQ,variances.y);
+
+        // Update the ncdat file name to reflect the adhesion parameter
+        std::sprintf(buffer, "tissuesim_g%dp%d_Ap%dp%d_NT%dp%d_fe%dp%d.nc", 
+                     static_cast<int>(std::floor(adhesion)), 
+                     static_cast<int>(std::fmod(std::floor(adhesion * 1000), 1000)), 
+                     static_cast<int>(std::floor(Ap)), 
+                     static_cast<int>(std::fmod(std::floor(Ap * 1000), 1000)), 
+                     static_cast<int>(std::floor(NT)), 
+                     static_cast<int>(std::fmod(std::floor(NT * 1000), 1000)),
+                     static_cast<int>(std::floor(forcexponent)), 
+                     static_cast<int>(std::fmod(std::floor(forcexponent * 1000), 1000)));
+        std::string dataname(buffer);
+
+        AVMDatabaseNetCDF ncdat(Nvert,dataname,NcFile::Replace);
+        //save the initial state
+          ncdat.writeState(vertexModel);
+        // Run the simulation
+        for (int i = 0; i < initSteps; ++i) {
+                              //emin        //dt  //alpha //dtmax //dtinc //dtdec //alphadec //nmin //forcetol
+            //setFIREParameters(fireMinimizer, dt,   0.99,      0.1, 1.01,     0.99,   0.9,       4,     1e-13);
+            setFIREParameters(fireMinimizer, dt, alphaStart, deltaTMax, deltaTInc, deltaTDec, alphaDec, nMin, forceCutoff);
+            fireMinimizer->setMaximumIterations(tSteps * (i + 1));
+            sim->performTimestep();
+            if (i % writestep == 0) {
+                ncdat.writeState(vertexModel);
+            }
+            double mf = fireMinimizer->getMaxForce();
+            double meanEdgeTension = vertexModel->reportMeanEdgeTension();
+
+            if (mf < 1e-12) {
+                break;
+                ncdat.writeState(vertexModel);
+            }
+            if (meanEdgeTension < -7) {
+                break;
+                ncdat.writeState(vertexModel);
+            }
+        }
+
+        vertexModel->computeGeometry();
+        std::clock_t end = std::clock();
+        double elapsed_secs = double(end - start) / CLOCKS_PER_SEC;
+        double meanEdgeTension = vertexModel->reportMeanEdgeTension();
+
+        std::cout << "Elapsed time: " << elapsed_secs/60.0/60.0 << " h\n";
+        printf("Adhesion: %f, ForceExponent: %f, Mean log edge tension: %f\n", adhesion, forcexponent,meanEdgeTension);
+        // Append the adhesion and resulting meanEdgeTension to the text file
+       // resultsFile << adhesion <<"\t"<< forcexponent <<"\t" << meanEdgeTension << "\n";
+
+        // compute width of distribution of number of neighbors
+        std::vector<int> numneighs = vertexModel->reportCellNeighborCounts();
+        std::vector<double> doubleVec;
+        doubleVec.reserve(numneighs.size()); // Reserve space to avoid multiple allocations
+        for (int val : numneighs) {
+        doubleVec.push_back(static_cast<double>(val));
+        }
+        double cn = calculate_std_dev(doubleVec);
+        double nbar=calculate_mean(doubleVec);
+        cn = cn*cn/nbar;
+       // cnFile << adhesion << "\t" << cn << "\n";
+        printf("Adhesion: %f, ForceExponent: %f, Coefficient of variation of n: %f\n", adhesion, forcexponent, cn);
+
+        std::vector<vector<double>> stats = vertexModel->calculateregionprops();
+        double sumEccentricity = 0.0;
+        int numCells = stats.size();
+
+        for (const auto& cell : stats) {
+         sumEccentricity += cell[4]; // Assuming eccentricity is at index 4
+        }
+
+        double meane = numCells > 0 ? sumEccentricity / numCells : 0.0;
+      //  eccentricityFile << adhesion << "\t" << meane << "\n";
+        printf("Adhesion: %f, ForceExponent: %f, Mean eccentricity: %f\n", adhesion, forcexponent, meane);
+
+        std::sprintf(buffer, "finalneighbors_g%dp%d_fe%dp%d.txt", static_cast<int>(std::floor(adhesion)), static_cast<int>(std::fmod(std::floor(adhesion * 1000), 1000)), static_cast<int>(std::floor(forcexponent)), static_cast<int>(std::fmod(std::floor(forcexponent * 1000), 1000)));
+        std::ofstream finalNeighborsFile(buffer);
+        for (int i = 0; i < numpts; ++i) {
+            finalNeighborsFile << cellneighbors[i] << "\n" << std::endl;
+        }
+        finalNeighborsFile.close();
+
+        // Save area preferences
+        std::sprintf(buffer, "finalareas_g%dp%d_fe%dp%d.txt", static_cast<int>(std::floor(adhesion)), static_cast<int>(std::fmod(std::floor(adhesion * 1000), 1000)), static_cast<int>(std::floor(forcexponent)),  static_cast<int>(std::fmod(std::floor(forcexponent * 1000), 1000)));
+        std::ofstream areafinalFile(buffer);
+        for (int i = 0; i < numpts; ++i) {
+            areafinalFile << areas[i] << "\n";
+        }
+        areafinalFile.close();
+
+        // Save perimeter preferences
+        std::sprintf(buffer, "finalperimeter_g%dp%d_fe%dp%d.txt", static_cast<int>(std::floor(adhesion)), static_cast<int>(std::fmod(std::floor(adhesion * 1000), 1000)), static_cast<int>(std::floor(forcexponent)), static_cast<int>(std::fmod(std::floor(forcexponent * 1000), 1000)));
+        std::ofstream perimeterfinalFile(buffer);
+        for (int i = 0; i < numpts; ++i) {
+            perimeterfinalFile << perimeters[i] << "\n";
+        }
+        perimeterfinalFile.close();
+
+        if (meanEdgeTension<-4)
+            break; //move onto next force exponent to make simulation go faster. 
+
+    }
+    }
+
+   // resultsFile.close();
+   // cnFile.close();
+   // eccentricityFile.close();
+
     if(initializeGPU)
         cudaDeviceReset();
     return 0;
