@@ -345,6 +345,106 @@ void vertexModelBase::computeGeometryGPU()
                     Ncells,n_idx,*(Box));
     };
 
+ /*Issue: cant seem to read in vertex positions with ArrayHandle<double2> lines
+void vertexModelBase::calculateStats(Stats& stats) {
+    std::vector<double2> vertexPositions;
+    std::vector<int> cellTopology;
+    std::vector<int> cellVertIndices;
+
+
+//Grab stuff
+        if (GPUcompute)
+        {
+        ArrayHandle<double2> d_v(vertexPositions,access_location::device,access_mode::read);
+                for (int i = 0; i < 2*Ncells; ++i) {
+            vertexPositions.push_back(d_v.data[i]);
+        }
+        }
+        else 
+        {
+        ArrayHandle<double2> h_v(vertexPositions,access_location::host,access_mode::read);
+                for (int i = 0; i < 2*Ncells; ++i) {
+            vertexPositions.push_back(h_v.data[i]);
+        }
+        }
+
+        ArrayHandle<int> h_cvn(cellVertexNum,access_location::host,access_mode::read);
+        for (int i = 0; i < Ncells; ++i) {
+            cellTopology.push_back(h_cvn.data[i]);
+        }
+        ArrayHandle<int> h_cv(cellVertices,access_location::host,access_mode::read);
+        for (int i = 0; i < Ncells; ++i) {
+            for (int j = 0; j < vertexMax; ++j) {
+                cellVertIndices.push_back(h_cv.data[i*vertexMax + j]);
+            }
+        }
+    
+
+    std::vector<int> icellvertices;
+
+    
+    double sumX = 0.0;
+    double sumY = 0.0;
+    for (int i = 0; i < Ncells; ++i) {
+        int inumneighbors = cellTopology[i];
+        //icellvertices.resize(inumneighbors);
+        for (int j = 0; j < inumneighbors; ++j) {
+        //    icellvertices[j] = cellVertIndices[i*vertexMax + j];
+        // Calculate the centroid of the cell
+        sumX += vertexPositions[cellVertIndices[i*vertexMax + j]].x;
+        sumY += vertexPositions[cellVertIndices[i*vertexMax + j]].y;
+        } 
+    stats.Centroid[i].x = sumX / Ncells;
+    stats.Centroid[i].y = sumY / Ncells;
+
+    double xbar = stats.Centroid[i].x;
+    double ybar = stats.Centroid[i].y;
+
+    std::vector<double> x(inumneighbors);
+    std::vector<double> y(inumneighbors);
+
+    for (int j = 0; j < inumneighbors; ++j) {
+        x[j] = vertexPositions[cellVertIndices[i*vertexMax + j]].x - xbar;
+        y[j] = -(vertexPositions[cellVertIndices[i*vertexMax + j]].y - ybar); // Negative for orientation calculation
+    }
+
+    // Calculate normalized second central moments for the region
+    double uxx = 0.0, uyy = 0.0, uxy = 0.0;
+    for (int j = 0; j < inumneighbors; ++j) {
+        uxx += x[i] * x[i];
+        uyy += y[i] * y[i];
+        uxy += x[i] * y[i];
+    }
+    uxx = uxx / inumneighbors;
+    uyy = uyy / inumneighbors;
+    uxy = uxy / inumneighbors;
+
+    // Calculate major axis length, minor axis length, and eccentricity
+    double common = std::sqrt((uxx - uyy) * (uxx - uyy) + 4 * uxy * uxy);
+    stats.MajorAxisLength[i] = 2 * std::sqrt(2) * std::sqrt(uxx + uyy + common);
+    stats.MinorAxisLength[i] = 2 * std::sqrt(2) * std::sqrt(uxx + uyy - common);
+    stats.Eccentricity[i] = 2 * std::sqrt((stats.MajorAxisLength[i] / 2) * (stats.MajorAxisLength[i] / 2) -
+                                       (stats.MinorAxisLength[i] / 2) * (stats.MinorAxisLength[i] / 2)) /
+                         stats.MajorAxisLength[i];
+
+    // Calculate orientation
+    double num, den;
+    if (uyy > uxx) {
+        num = uyy - uxx + std::sqrt((uyy - uxx) * (uyy - uxx) + 4 * uxy * uxy);
+        den = 2 * uxy;
+    } else {
+        num = 2 * uxy;
+        den = uxx - uyy + std::sqrt((uxx - uyy) * (uxx - uyy) + 4 * uxy * uxy);
+    }
+    if (num == 0 && den == 0) {
+        stats.Orientation[i] = 0;
+    } else {
+        stats.Orientation[i] = (180 / M_PI) * std::atan(num / den);
+    }
+
+    } //end loop over all cells
+}//end calculateStats       
+*/
 /*!
 This function fills the "cellPositions" GPUArray with the centroid of every cell. Does not assume
 that the area in the AreaPeri array is current. This function just calls the CPU or GPU routine, as determined by the GPUcompute flag

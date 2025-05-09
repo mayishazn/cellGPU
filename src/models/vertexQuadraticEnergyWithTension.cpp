@@ -87,14 +87,40 @@ void VertexQuadraticEnergyWithTension::computeVertexTensionForcesCPU()
         {
         //for the change in the energy of the cell, just repeat the vertexQuadraticEnergy part
         int cellIdx1 = h_vcn.data[fsidx];
-        double Adiff = KA*(h_AP.data[cellIdx1].x - h_APpref.data[cellIdx1].x);
-        double Pdiff = KP*(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y);
+        double Adiff = KA/2*h_APpref.data[cellIdx1].x*pow((h_AP.data[cellIdx1].x - h_APpref.data[cellIdx1].x)/h_APpref.data[cellIdx1].x,1);
+        //double Adiff = 0; //it seems I have to pass in Adiff to computeForceSetVertexModel 
+        double Pdiff = KP/2*(forceExponent+1)*pow(abs(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y)/h_APpref.data[cellIdx1].y,forceExponent)*(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y)/abs((h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y));
         vcur = h_vc.data[fsidx];
         vlast.x = h_vln.data[fsidx].x;  vlast.y = h_vln.data[fsidx].y;
         vnext.x = h_vln.data[fsidx].z;  vnext.y = h_vln.data[fsidx].w;
 
         //computeForceSetVertexModel is defined in inc/utility/functions.h
-        computeForceSetVertexModel(vcur,vlast,vnext,Adiff,Pdiff,dEdv);
+        //computeForceSetVertexModel(vcur,vlast,vnext,Adiff,Pdiff,dEdv);
+        //(const double2 &vcur, const double2 &vlast, const double2 &vnext,
+        //const double &Adiff, const double &Pdiff,
+        //double2 &dEdv)
+        //replacement for computeForceSetVertexModel
+        double2 dlast,dnext,dAdv,dPdv;
+
+        //note that my conventions for dAdv and dPdv take care of the minus sign, so
+        //that dEdv below is reall -dEdv, so it's the force
+        dAdv.x = 0.5*(vlast.y-vnext.y); //half distance between neighboring points
+        dAdv.y = -0.5*(vlast.x-vnext.x);
+        dlast.x = vlast.x-vcur.x;
+        dlast.y = vlast.y-vcur.y;
+        double dlnorm = sqrt(dlast.x*dlast.x+dlast.y*dlast.y);
+        dnext.x = vcur.x-vnext.x;
+        dnext.y = vcur.y-vnext.y;
+        double dnnorm = sqrt(dnext.x*dnext.x+dnext.y*dnext.y);
+        dPdv.x = dlast.x/dlnorm - dnext.x/dnnorm;
+        dPdv.y = dlast.y/dlnorm - dnext.y/dnnorm;
+    
+        //compute the area of the triangle to know if it is positive (convex cell) or not
+    //    double TriAreaTimes2 = -vnext.x*vlast.y+vcur.y*(vnext.x-vlast.x)+vcur.x*(vlast.y-vnext.x)+vlast.x+vnext.y;
+    //    double TriAreaTimes2 = dlast.x*dnext.y - dlast.y*dnext.x;
+        dEdv.x = (Adiff*dAdv.x + Pdiff*dPdv.x);
+        dEdv.y = (Adiff*dAdv.y + Pdiff*dPdv.y);
+        //end replacement snippet
         h_fs.data[fsidx].x = dEdv.x;
         h_fs.data[fsidx].y = dEdv.y;
 
@@ -156,10 +182,64 @@ void VertexQuadraticEnergyWithTension::computeVertexTensionForcesCPU()
         };
     };
 
+double VertexQuadraticEnergyWithTension::reportMeanEdgeTension()
+    {
+    if(!forcesUpToDate)
+        computeForces();
+
+    std::vector<std::vector<int>> cellNeighbors = reportCellNeighbors();
+    ArrayHandle<double2> h_APpref(AreaPeriPreferences,access_location::host,access_mode::read);
+    ArrayHandle<double2> h_AP(AreaPeri,access_location::host,access_mode::read);
+    // Initialize the sum
+    double sum = 0.0;
+    int count = 0; // To count the number of valid terms
+
+    // Loop over all cells
+    for (int i = 0; i < Ncells; ++i) {
+        double P_i = h_AP.data[i].y; // Perimeter of cell i
+        double P_i0 = h_APpref.data[i].y; // Perimeter preference of cell i
+        //perimeters[i] = 2 * std::sqrt(M_PI * areas[i])
+        // Loop over neighbors of cell i
+        for (int j : cellNeighbors[i]) {
+            double P_j = h_AP.data[j].y; // Perimeter of cell j
+            double P_j0 = h_APpref.data[j].y; // Perimeter preference of cell j
+            // Compute the terms
+            double term_i = (forceExponent+1)*KP*pow(abs(P_i - P_i0)/P_i0,forceExponent)*((P_i - P_i0)/abs((P_i - P_i0)));
+            double term_j = (forceExponent+1)*KP*pow(abs(P_j - P_j0)/P_j0,forceExponent)*((P_j - P_j0)/abs((P_j - P_j0)));
+
+            // Compute the expression
+            double expression = term_i + term_j - gamma;
+
+            // Ensure the expression is positive before taking the logarithm
+            if (expression > 0) {
+                if (expression<1e-9) 
+                    {expression = 1e-9;} //testing if setting a small positive number threshold helps
+                sum += log10(expression);
+                count++; 
+            }
+            else { //print out min and max neg numbers maybe???
+                sum += log10(1e-9);
+                count++; 
+            }
+            
+        }
+    }
+    std::cout << "count = " << count << std::endl;
+    // Compute the mean of the logarithm
+    double meanLogEdgeTension = (count > 0) ? (sum / count) : 0.0;
+    //double meanLogEdgeTension = sum / (3*Ncells);
+    return meanLogEdgeTension;
+    };
+
+
 double VertexQuadraticEnergyWithTension::computeEnergy()
     {
     if(!forcesUpToDate)
         computeForces();
+
+
+    //return totalEnergy;
+//};
     printf("computeEnergy function for VertexQuadraticEnergyWithTension not written. Very sorry\n");
     throw std::exception();
     return 0;
@@ -195,6 +275,7 @@ void VertexQuadraticEnergyWithTension::computeVertexTensionForceGPU()
             cellTypeIndexer,
             n_idx,
             simpleTension,
+            forceExponent,
             gamma,
             nForceSets,
             KA,KP
