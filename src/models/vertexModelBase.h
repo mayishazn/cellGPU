@@ -5,7 +5,6 @@
 //include spp dynamics for SPV-based initialization of configurations
 #include "selfPropelledParticleDynamics.h"
 #include "Simulation.h"
-#include "simpleVertexDatabase.h"
 
 /*! \file vertexModelBase.h */
 //!A class that can calculate many geometric and topological features common to vertex models
@@ -56,7 +55,15 @@ class vertexModelBase : public Simple2DActiveCell
         virtual void computeGeometryCPU();
         //!Compute the geometry (area & perimeter) of the cells on the GPU
         virtual void computeGeometryGPU();
-
+        
+        struct Stats {
+        std::vector<double2> Centroid;
+        std::vector<double> MajorAxisLength;
+        std::vector<double> MinorAxisLength;
+        std::vector<double> Eccentricity;
+        std::vector<double> Orientation;
+        };
+        //void calculateStats(Stats& stats); 
         //!Call the CPU or GPU getCellCentroids function
         void getCellCentroids();
         //!Get the cell position from the vertices on the CPU
@@ -158,6 +165,5 @@ class vertexModelBase : public Simple2DActiveCell
                 }
             cout <<endl;
             };
-    friend class simpleVertexDatabase;
     };
 #endif

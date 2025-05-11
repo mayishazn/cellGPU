@@ -7,6 +7,7 @@
 #include "HilbertSort.h"
 #include "noiseSource.h"
 #include "functions.h"
+#include "gpuarray.h"
 
 /*! \file Simple2DCell.h */
 //! Implement data structures and functions common to many off-lattice models of cells in 2D
@@ -22,6 +23,7 @@ class Simple2DCell : public Simple2DModel
         Simple2DCell();
 
         //! initialize class' data structures and set default values
+        //void initializeSimple2DCell(int n, double disorderParam, bool gpu = true);
         void initializeSimple2DCell(int n, bool gpu = true);
 
         //! change the box dimensions, and rescale the positions of particles
@@ -107,6 +109,10 @@ class Simple2DCell : public Simple2DModel
         //!This can be used, but should not normally be. This re-assigns the pointer
         void setBox(PeriodicBoxPtr _box){Box = _box;};
 
+        //set random actin angles and also initialize the cell orientations
+        //h_theta.x is the orientation of the cell
+        //h_theta.y is the actin angle (or orientation preference)
+        void setCellThetaRandom();
 
         //!return the base "itt" re-indexing vector
         virtual vector<int> & returnItt(){return itt;};
@@ -162,9 +168,12 @@ class Simple2DCell : public Simple2DModel
         int Ncells;
         //!Number of vertices
         int Nvertices;
-
+        // disorder parameter for cell positions
+        double disorderParameter = std::numeric_limits<double>::quiet_NaN(); // Sentinel value
         //! Cell positions... not used for computation, but can track, e.g., MSD of cell centers
         GPUArray<double2> cellPositions;
+        //std::vector<double2> theta; 
+        GPUArray<double2> theta;// (theta,actin angle) for each cell
         //! Position of the vertices
         GPUArray<double2> vertexPositions;
         //!The velocity vector of cells (only relevant if the equations of motion use it)
@@ -375,6 +384,13 @@ class Simple2DCell : public Simple2DModel
                     };
                 printf("total area = %f\n",vtot);
                 };
+        //!Mayisha defined 
+        std::vector<double2> reportAsPs();
+        //!Mayisha defined
+        std::vector<int> reportCellNeighborCounts();
+        std::vector<std::vector<int>> reportCellNeighbors();
+        //Stat calculateStats();
+        std::vector<std::vector<double>> calculateregionprops();  
         //! Report the average value of p/sqrt(A) for the cells in the system
         double reportq();
 
