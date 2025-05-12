@@ -163,6 +163,7 @@ class Simple2DCell : public Simple2DModel
         //!Number of vertices
         int Nvertices;
 
+
         //! Cell positions... not used for computation, but can track, e.g., MSD of cell centers
         GPUArray<double2> cellPositions;
         //! Position of the vertices
@@ -375,6 +376,13 @@ class Simple2DCell : public Simple2DModel
                     };
                 printf("total area = %f\n",vtot);
                 };
+        //!Mayisha defined 
+        std::vector<double2> reportAsPs();
+        //!Mayisha defined
+        std::vector<int> reportCellNeighborCounts();
+        std::vector<std::vector<int>> reportCellNeighbors();
+        //Stat calculateStats();
+        std::vector<std::vector<double>> calculateregionprops();  
         //! Report the average value of p/sqrt(A) for the cells in the system
         double reportq();
 

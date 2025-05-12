@@ -9,7 +9,6 @@
 #include "structures.h"
 #include "voronoiModelBase.cuh"
 
-class simpleVoronoiDatabase;
 
 /*! \file voronoiModelBase.h */
 //! Perform and test triangulations in an MD setting, using kernels in \ref voronoiModelBaseKernels
@@ -191,7 +190,6 @@ class voronoiModelBase : public Simple2DActiveCell
 
         //!In GPU mode, interactions are computed "per voronoi vertex"...forceSets are summed up to get total force on a particle
         GPUArray<double2> forceSets;
-    friend class simpleVoronoiDatabase;
     };
 
 #endif

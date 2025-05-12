@@ -16,7 +16,6 @@ include_directories(
         )
 
 add_library(updaters
-    gradientDescent.cpp
     velocityVerlet.cpp
     brownianParticleDynamics.cpp
     EnergyMinimizerFIRE2D.cpp
@@ -30,7 +29,7 @@ add_library(updaters
     langevinDynamics.cpp
     VSSRNEMD.cpp
     )
-add_library(updatersGPU
+cuda_add_library(updatersGPU
     EnergyMinimizerFIRE2D.cu
     NoseHooverChainNVT.cu
     brownianParticleDynamics.cu
@@ -42,6 +41,3 @@ add_library(updatersGPU
     simpleEquationOfMotion.cu
     langevinDynamics.cu
     )
-
-set_target_properties(updatersGPU PROPERTIES
-                            CUDA_SEPARABLE_COMPILATION ON)
