@@ -27,7 +27,6 @@ __global__ void vm_tensionForceSets_kernel(
             Index2D cellTypeIndexer,
             Index2D n_idx,
             bool simpleTension,
-            double forceExponent,
             double gamma,
             double actinStrength, 
             int nForceSets,
@@ -48,18 +47,12 @@ __global__ void vm_tensionForceSets_kernel(
     int cellIdx1 = vertexCellNeighbors[fsidx];
     double Adiff = KA/2*(areaPeri[cellIdx1].x - APPref[cellIdx1].x);
     double alpha = actinStrength; 
-    double Pdiff = KP/2*(forceExponent+1)*pow(abs(areaPeri[cellIdx1].y/APPref[cellIdx1].y-1),forceExponent)*(areaPeri[cellIdx1].y - APPref[cellIdx1].y)/abs((areaPeri[cellIdx1].y - APPref[cellIdx1].y));
-
     //double Pdiff = KP*(areaPeri[cellIdx1].y - APPref[cellIdx1].y);
     vcur = voroCur[fsidx];
     vlast.x = voroLastNext[fsidx].x;  vlast.y = voroLastNext[fsidx].y;
     vnext.x = voroLastNext[fsidx].z;  vnext.y = voroLastNext[fsidx].w;
-
     double2 dlast,dnext,dAdv,dPdv;
-
-    //note that my conventions for dAdv and dPdv take care of the minus sign, so
-    //that dEdv below is reall -dEdv, so it's the force
-    dAdv.x = 0.5*(vlast.y-vnext.y); //half distance between neighboring points
+    dAdv.x = 0.5*(vlast.y-vnext.y);
     dAdv.y = -0.5*(vlast.x-vnext.x);
     dlast.x = vlast.x-vcur.x;
     dlast.y = vlast.y-vcur.y;
@@ -70,18 +63,9 @@ __global__ void vm_tensionForceSets_kernel(
     dPdv.x = dlast.x/dlnorm - dnext.x/dnnorm;
     dPdv.y = dlast.y/dlnorm - dnext.y/dnnorm;
         
-
-    //compute the area of the triangle to know if it is positive (convex cell) or not
-    //    double TriAreaTimes2 = -vnext.x*vlast.y+vcur.y*(vnext.x-vlast.x)+vcur.x*(vlast.y-vnext.x)+vlast.x+vnext.y;
-    //    double TriAreaTimes2 = dlast.x*dnext.y - dlast.y*dnext.x;
-    dEdv.x = (Adiff*dAdv.x + Pdiff*dPdv.x);
-    dEdv.y = (Adiff*dAdv.y + Pdiff*dPdv.y);
-    //dEdv.x = (2)*(Adiff*dAdv.x + Pdiff*dPdv.x);
-    //dEdv.y = (2)*(Adiff*dAdv.y + Pdiff*dPdv.y);
-    //end replacement snippet
-    forceSets[fsidx].x = dEdv.x;
-    forceSets[fsidx].y = dEdv.y;
-
+    //computeForceSetVertexModel(vcur,vlast,vnext,Adiff,Pdiff,dEdv);
+    forceSets[fsidx].x = 2.0*Adiff*dAdv.x;
+    forceSets[fsidx].y = 2.0*Adiff*dAdv.y;
 
     //Now, to the potential for tension terms...
     //first, determine the index of the cell other than cellIdx1 that contains both vcur and vnext
@@ -140,7 +124,7 @@ __global__ void vm_tensionForceSets_kernel(
         double xbar = sumX / inumneighbors;
         double ybar = sumY / inumneighbors;
         double xcurr = vcur.x - xbar;
-        double ycurr = vcur.y - ybar; 
+        double ycurr = vcur.y - ybar; // 05/10/2025
         // Calculate normalized second central moments for the region
 
         double uxx = 0.0;
@@ -152,7 +136,7 @@ __global__ void vm_tensionForceSets_kernel(
     
             for (int j = 0; j < inumneighbors; ++j) {
                 double x = vertexPositions[cellVertices[cellIdx1 * vertexMax + j]].x - xbar;
-                double y = (vertexPositions[cellVertices[cellIdx1 * vertexMax + j]].y - ybar); // 
+                double y = (vertexPositions[cellVertices[cellIdx1 * vertexMax + j]].y - ybar); // // 05/10/2025
                 uxx+= x * x;
                 uyy+= y * y;
                 uxy += x * y;  
@@ -166,7 +150,7 @@ __global__ void vm_tensionForceSets_kernel(
         
             duxx_dx = 2*(xcurr - avgx);
             duyy_dx = 0.0;
-            duxy_dx = ycurr - avgy; 
+            duxy_dx = ycurr - avgy; // 05/10/2025
         
             duyy_dy = 2*(ycurr - avgy);
             duxx_dy = 0.0;
@@ -260,7 +244,6 @@ bool gpu_vertexModel_tension_force_sets(
         Index2D &cellTypeIndexer,
         Index2D &n_idx,
         bool simpleTension,
-        double forceExponent,
         double gamma,
         double actinStrength,
         int nForceSets,
@@ -277,7 +260,7 @@ bool gpu_vertexModel_tension_force_sets(
             voroLastNext, vertexPositions, areaPeri,APPref, theta,
             cellType,cellVertices,cellVertexNum,
             tensionMatrix,forceSets,cellTypeIndexer,
-            n_idx,simpleTension,forceExponent, gamma,actinStrength,
+            n_idx,simpleTension,gamma,actinStrength,
             nForceSets, vertexMax, Ncells, KA,KP
             );
     HANDLE_ERROR(cudaGetLastError());

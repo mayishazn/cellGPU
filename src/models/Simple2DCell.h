@@ -113,6 +113,7 @@ class Simple2DCell : public Simple2DModel
         //h_theta.x is the orientation of the cell
         //h_theta.y is the actin angle (or orientation preference)
         void setCellThetaRandom();
+        void setCellTheta(vector<double> &theta0);
 
         //!return the base "itt" re-indexing vector
         virtual vector<int> & returnItt(){return itt;};
@@ -168,10 +169,8 @@ class Simple2DCell : public Simple2DModel
         int Ncells;
         //!Number of vertices
         int Nvertices;
-
         // disorder parameter for cell positions
-        double disorderParameter = std::numeric_limits<double>::quiet_NaN(); // Sentinel value not used yet
-
+        double disorderParameter = std::numeric_limits<double>::quiet_NaN(); // Sentinel value
         //! Cell positions... not used for computation, but can track, e.g., MSD of cell centers
         GPUArray<double2> cellPositions;
         //std::vector<double2> theta; 
