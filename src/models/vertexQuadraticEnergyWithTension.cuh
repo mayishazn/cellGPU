@@ -30,6 +30,7 @@ bool gpu_vertexModel_tension_force_sets(
             Index2D &cellTypeIndexer,
             Index2D &n_idx,
             bool simpleTension,
+            double forceExponent,
             double gamma,
             double alpha, 
             int nForceSets,

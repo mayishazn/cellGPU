@@ -168,8 +168,10 @@ class Simple2DCell : public Simple2DModel
         int Ncells;
         //!Number of vertices
         int Nvertices;
+
         // disorder parameter for cell positions
-        double disorderParameter = std::numeric_limits<double>::quiet_NaN(); // Sentinel value
+        double disorderParameter = std::numeric_limits<double>::quiet_NaN(); // Sentinel value not used yet
+
         //! Cell positions... not used for computation, but can track, e.g., MSD of cell centers
         GPUArray<double2> cellPositions;
         //std::vector<double2> theta; 

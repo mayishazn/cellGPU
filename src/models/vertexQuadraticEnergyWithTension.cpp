@@ -291,11 +291,10 @@ void VertexQuadraticEnergyWithTension::computeVertexTensionForcesCPU()
            // printf("cellIdx1 = %i\n",h_vcn.data[fsidx]);
            // };
         int cellIdx1 = h_vcn.data[fsidx];
-        double Adiff = (KA/2)*(h_AP.data[cellIdx1].x - h_APpref.data[cellIdx1].x);
-        //if (fsidx == 1)
-          //  {
-           // printf("Adiff = %f\n",Adiff);
-            //};
+
+        double Adiff = KA/2*h_APpref.data[cellIdx1].x*pow((h_AP.data[cellIdx1].x - h_APpref.data[cellIdx1].x)/h_APpref.data[cellIdx1].x,1);
+        //double Adiff = 0; //it seems I have to pass in Adiff to computeForceSetVertexModel 
+        double Pdiff = KP/2*(forceExponent+1)*pow(abs(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y)/h_APpref.data[cellIdx1].y,forceExponent)*(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y)/abs((h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y));
         vcur = h_vc.data[fsidx];
         vlast.x = h_vln.data[fsidx].x;  vlast.y = h_vln.data[fsidx].y;
         vnext.x = h_vln.data[fsidx].z;  vnext.y = h_vln.data[fsidx].w;
@@ -334,15 +333,14 @@ void VertexQuadraticEnergyWithTension::computeVertexTensionForcesCPU()
            // printf("|dtheta.x| > 0: (%d)\n",abs(dtheta.x) > 0);
            // printf("|dtheta.y| > 0: (%d)\n",abs(dtheta.y) > 0);
            // };
-       //energy function is E =  1/2 ((P-P0)^2/P0)*(1+alpha*A*N sin^2(theta-actinAngle))
+       //energy function is E =  KP/2 ((P-P0)^w/P0)*(1+alpha*A*N sin^2(theta-actinAngle))
        //Now compute first term --> note 
-       //-(P-P0)/P0 * (1+alpha*A*N sin^2(theta-actinAngle)) dP/dx == termA * dP/dx
-       double termA = KP*(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y)/h_APpref.data[cellIdx1].y * (1+alpha*sin(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y)*sin(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y));
-
-
-       //Now compute second term
-       //-(P-P0)^2/P0 * (2*alpha*A*N sin(theta-actinAngle)cos(theta-actinAngle))*dtheta/dx == termB * dtheta/dx
-       double termB = -KP*(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y)*(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y)/h_APpref.data[cellIdx1].y * (2*alpha*sin(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y)*cos(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y));
+       //-(w/2)(P-P0)^(w-1)/P0 * (1+alpha*A*N sin^2(theta-actinAngle)) dP/dx == termA * dP/dx
+      //Note original code embeds minus sign in dPdx and dPdy for the force.
+       double termA = (forceExponent+1)*KP/2*pow(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y,forceExponent)/h_APpref.data[cellIdx1].y * (1+alpha*sin(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y)*sin(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y));
+       //Now compute second term //this does not involve dPdx or dPdA so you need a minus sign. 
+       //-(KP/2)*(P-P0)^w/P0 * (2*alpha*A*N sin(theta-actinAngle)cos(theta-actinAngle))*dtheta/dx == termB * dtheta/dx
+       double termB = -KP/2*pow(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y,(forceExponent+1))/h_APpref.data[cellIdx1].y * (2*alpha*sin(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y)*cos(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y));
         double termA_x = termA * dPdv.x;
         double termA_y = termA * dPdv.y;
         double termB_x = termB * dtheta.x;
@@ -498,15 +496,19 @@ double VertexQuadraticEnergyWithTension::reportMeanEdgeTension()
             double theta_j = h_theta.data[j].x; // Orientation of cell j
             double theta_j0 = h_theta.data[j].y; // Actin angle of cell j
             // Compute the terms
-            
-            double termA = KP*(P_i - P_i0)/P_i0 * (1+alpha*sin(theta_i - theta_i0)*sin(theta_i - theta_i0));
-            double termB = -KP*(P_i - P_i0)*(P_i - P_i0)/P_i0 * (2*alpha*sin(theta_i - theta_i0)*cos(theta_i - theta_i0));
+        //           double termA = (forceExponent+1)*KP/2*pow(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y,forceExponent)/h_APpref.data[cellIdx1].y * (1+alpha*sin(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y)*sin(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y));
+       //Now compute second term
+       //-(P-P0)^w/P0 * (2*alpha*A*N sin(theta-actinAngle)cos(theta-actinAngle))*dtheta/dx == termB * dtheta/dx
+       //double termB = KP*pow(h_AP.data[cellIdx1].y - h_APpref.data[cellIdx1].y,(forceExponent+1))/h_APpref.data[cellIdx1].y * (2*alpha*sin(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y)*cos(h_theta.data[cellIdx1].x - h_theta.data[cellIdx1].y));
+       
+            double termA = (forceExponent+1)*KP/2*pow(P_i - P_i0,forceExponent)/P_i0 * (1+alpha*sin(theta_i - theta_i0)*sin(theta_i - theta_i0));
+            double termB = KP/2*pow(P_i - P_i0,forceExponent+1)/P_i0 * (2*alpha*sin(theta_i - theta_i0)*cos(theta_i - theta_i0));
     
             double term_i = termA+termB;
 
             
-            termA = KP*(P_j - P_j0)/P_j0 * (1+alpha*sin(theta_j - theta_j0)*sin(theta_j - theta_j0));
-            termB = -KP*(P_j - P_j0)*(P_j - P_j0)/P_j0 * (2*alpha*sin(theta_j - theta_j0)*cos(theta_j - theta_j0));
+            termA = (forceExponent+1)*KP/2*pow(P_j - P_j0,forceExponent)/P_j0 * (1+alpha*sin(theta_j - theta_j0)*sin(theta_j - theta_j0));
+            termB = KP/2*pow(P_j - P_j0,forceExponent+1)/P_j0 * (2*alpha*sin(theta_j - theta_j0)*cos(theta_j - theta_j0));
             double term_j = termA+termB;
 
             // Compute the expression
@@ -579,6 +581,7 @@ void VertexQuadraticEnergyWithTension::computeVertexTensionForceGPU()
             cellTypeIndexer,
             n_idx,
             simpleTension,
+            forceExponent,
             gamma,
             actinStrength, 
             nForceSets,
