@@ -8,7 +8,6 @@
 #include <cmath>
 #include "gpuarray.h"
 
-
 using namespace std; 
 
 /*! \file Simple2DCell.cpp */
@@ -247,6 +246,140 @@ void Simple2DCell::setCellThetaRandom()
             orientation = std::atan2(num, den);
         }
         double angle = dis(gen);
+
+        h_theta.data[i].x = orientation; //current cell orientation
+        h_theta.data[i].y = angle; //angle preference aka actin angle
+        //std::cout << "orientation: " << orientation << " actin angle: "  << angle << std::endl;
+    };
+};
+
+
+void Simple2DCell::setCellTheta(vector<double> &theta0)
+    {
+    //std::cout << "Ncells before resizing theta: " << Ncells << std::endl;
+    //std::cout << "Size of theta: " << theta.getNumElements() << std::endl;
+    theta.resize(Ncells);
+    //std::cout << "Size of theta: " << theta.getNumElements() << std::endl;
+    ArrayHandle<double2> h_theta(theta,access_location::host,access_mode::overwrite);
+    double Lx,bxy,Ly,byx;
+    Box->getBoxDims(Lx,bxy,byx,Ly);
+    //std::cout << "Line 133" << std::endl;
+    std::vector<double2> vertexPos;
+    std::vector<int> cellTopology;
+    std::vector<int> cellVertIndices;
+    //std::cout << "Line 137" << std::endl;
+    // Grab data
+    ArrayHandle<double2> h_v(vertexPositions, access_location::host, access_mode::read);
+    //std::cout << "Line 140" << std::endl;
+    //std::cout << "Size of vertexPositions: " << vertexPositions.getNumElements() << std::endl;
+    for (int i = 0; i < 2 * Ncells; ++i) {
+      //  std::cout << i << std::endl;
+        vertexPos.push_back(h_v.data[i]);
+    }
+    //std::cout << "Line 143" << std::endl;
+    ArrayHandle<int> h_cvn(cellVertexNum, access_location::host, access_mode::read);
+    for (int i = 0; i < Ncells; ++i) {
+        cellTopology.push_back(h_cvn.data[i]);
+    }
+    //std::cout << "Line 148" << std::endl;
+    ArrayHandle<int> h_cv(cellVertices, access_location::host, access_mode::read);
+    for (int i = 0; i < Ncells; ++i) {
+        for (int j = 0; j < vertexMax; ++j) {
+            cellVertIndices.push_back(h_cv.data[i * vertexMax + j]);
+        }
+    }
+    //std::cout << "Line 155" << std::endl;
+    //random angle generator
+    double min = -M_PI;
+    double max = M_PI;
+    
+    // Create a random number generator
+    std::random_device rd;  // Seed
+    ::mt19937 gen(rd()); // Mersenne Twister engine
+    std::uniform_real_distribution<> dis(min, max);
+    //std::cout << "Line 164" << std::endl;
+    // Calculate properties for each cell
+    for (int i = 0; i < Ncells; ++i) {
+        int inumneighbors = cellTopology[i];
+        double sumX = 0.0, sumY = 0.0;
+        double firstx = vertexPos[cellVertIndices[i * vertexMax + 0]].x;
+        double firsty = vertexPos[cellVertIndices[i * vertexMax + 0]].y;
+        if (firstx > Lx) firstx -= Lx;
+        if (firsty > Ly) firsty -= Ly;
+        if (firstx < 0) firstx += Lx;
+        if (firsty < 0) firsty += Ly;
+        // Calculate the centroid of the cell
+                // Calculate the centroid of the cell
+                for (int j = 0; j < inumneighbors; ++j) {
+                    double xtest = vertexPos[cellVertIndices[i * vertexMax + j]].x;
+                    double ytest = vertexPos[cellVertIndices[i * vertexMax + j]].y;
+                    double dist = sqrt(pow(xtest-firstx, 2) + pow(ytest-firsty, 2));
+                    for(int k=-1; k<2; k++){
+                        for(int l=-1; l<2; l++){
+                            if (dist>(sqrt(pow((xtest-firstx+k*Lx),2)+pow((ytest-firsty+l*Ly),2)))){
+                                dist = sqrt(pow((xtest-firstx+k*Lx),2)+pow((ytest-firsty+l*Ly),2));
+                                xtest = (xtest+k*Lx);
+                                ytest = (ytest+l*Ly);
+                            }
+                        }
+                    }
+                    sumX += xtest;
+                    sumY += ytest;
+                }
+        
+        double xbar = sumX / inumneighbors;
+        double ybar = sumY / inumneighbors;
+
+        // Calculate normalized second central moments for the region
+        std::vector<double> x(inumneighbors), y(inumneighbors);
+        double uxx = 0.0, uyy = 0.0, uxy = 0.0;
+
+        for (int j = 0; j < inumneighbors; ++j) {
+            double xtest = vertexPos[cellVertIndices[i * vertexMax + j]].x;
+            double ytest = vertexPos[cellVertIndices[i * vertexMax + j]].y;
+            double dist = sqrt(pow(xtest-firstx, 2) + pow(ytest-firsty, 2));
+            for(int k=-1; k<2; k++){
+                for(int l=-1; l<2; l++){
+                    if (dist>(sqrt(pow((xtest-firstx+k*Lx),2)+pow((ytest-firsty+l*Ly),2)))){
+                        dist = sqrt(pow((xtest-firstx+k*Lx),2)+pow((ytest-firsty+l*Ly),2));
+                        xtest = (xtest+k*Lx);
+                        ytest = (ytest+l*Ly);
+                        //if (i==13)
+                        //    printf("cell %d k and l for vertex %d (%d,%d)\n",i,j,k,l);
+                        //if (xtest<0) xtest+=Lx;
+                        //if (xtest>Lx) xtest-=Lx;
+                        //if (ytest<0) ytest+=Ly;
+                        //if (ytest>Ly) ytest-=Ly;
+                    }
+                }
+            }
+            x[j] = xtest-xbar;
+            //y[j] = -(vertexPos[cellVertIndices[i * vertexMax + j]].y - ybar); // Negative for orientation calculation
+            y[j] = ytest-ybar; // Negative for orientation calculation
+            uxx += x[j] * x[j];
+            uyy += y[j] * y[j];
+            uxy += x[j] * y[j];
+        }
+        uxx /= inumneighbors;
+        uyy /= inumneighbors;
+        uxy /= inumneighbors;
+
+        // Calculate orientation
+        double num, den;
+        double orientation;
+        if (uyy > uxx) {
+            num = uyy - uxx + std::sqrt((uyy - uxx) * (uyy - uxx) + 4 * uxy * uxy);
+            den = 2 * uxy;
+        } else {
+            num = 2 * uxy;
+            den = uxx - uyy + std::sqrt((uxx - uyy) * (uxx - uyy) + 4 * uxy * uxy);
+        }
+        if (num == 0 && den == 0) {
+            orientation = 0;
+        } else {
+            orientation = std::atan2(num, den);
+        }
+        double angle = theta0[i];
 
         h_theta.data[i].x = orientation; //current cell orientation
         h_theta.data[i].y = angle; //angle preference aka actin angle
@@ -1073,23 +1206,21 @@ std::vector<std::vector<double>> Simple2DCell::calculateregionprops() {
     std::vector<double2> vertexPos;
     std::vector<int> cellTopology;
     std::vector<int> cellVertIndices;
-
     double Lx,bxy,Ly,byx;
     Box->getBoxDims(Lx,bxy,byx,Ly);
     ArrayHandle<double2> h_theta(theta,access_location::host,access_mode::readwrite);
     //std::cout << "Size of vertexPositions: " << vertexPositions.getNumElements() << std::endl;
-
     // Grab data
     ArrayHandle<double2> h_v(vertexPositions, access_location::host, access_mode::read);
     for (int i = 0; i < 2 * Ncells; ++i) {
         vertexPos.push_back(h_v.data[i]);
     }
-
+    //std::cout << "Size of cellVertexNum: " << cellVertexNum.getNumElements() << std::endl;
     ArrayHandle<int> h_cvn(cellVertexNum, access_location::host, access_mode::read);
     for (int i = 0; i < Ncells; ++i) {
         cellTopology.push_back(h_cvn.data[i]);
     }
-
+    //std::cout << "Size of cellVertices: " << cellVertices.getNumElements() << std::endl;
     ArrayHandle<int> h_cv(cellVertices, access_location::host, access_mode::read);
     for (int i = 0; i < Ncells; ++i) {
         for (int j = 0; j < vertexMax; ++j) {
@@ -1101,7 +1232,6 @@ std::vector<std::vector<double>> Simple2DCell::calculateregionprops() {
     for (int i = 0; i < Ncells; ++i) {
         int inumneighbors = cellTopology[i];
         double sumX = 0.0, sumY = 0.0;
-
         double firstx = vertexPos[cellVertIndices[i * vertexMax + 0]].x;
         double firsty = vertexPos[cellVertIndices[i * vertexMax + 0]].y;
         //if (i==13)
@@ -1139,13 +1269,11 @@ std::vector<std::vector<double>> Simple2DCell::calculateregionprops() {
         //    printf("box (%f,%f)\n",Lx,Ly);
         //    printf("cell %d centroid (%f,%f)\n",i,xbar,ybar);
         //}
-
         // Calculate normalized second central moments for the region
         std::vector<double> x(inumneighbors), y(inumneighbors);
         double uxx = 0.0, uyy = 0.0, uxy = 0.0;
 
         for (int j = 0; j < inumneighbors; ++j) {
-
             double xtest = vertexPos[cellVertIndices[i * vertexMax + j]].x;
             double ytest = vertexPos[cellVertIndices[i * vertexMax + j]].y;
             //if (i==13)
@@ -1173,7 +1301,6 @@ std::vector<std::vector<double>> Simple2DCell::calculateregionprops() {
             y[j] = ytest-ybar; // Negative for orientation calculation
             //if (i==13)
             //    printf("cell %d shifted vertex %d (%f,%f)\n",i,j,x[j],y[j]);
-
             uxx += x[j] * x[j];
             uyy += y[j] * y[j];
             uxy += x[j] * y[j];
@@ -1203,14 +1330,13 @@ std::vector<std::vector<double>> Simple2DCell::calculateregionprops() {
         if (num == 0 && den == 0) {
             orientation = 0;
         } else {
-
             orientation = std::atan2(num, den);
         }
         double actinangle = h_theta.data[i].y; // This is the angle of the actin filament
         // Add the properties of the current cell to the stats vector
         stats.push_back({xbar, ybar, majorAxisLength, minorAxisLength, eccentricity, orientation, actinangle});
         h_theta.data[i].x = orientation;
-
+        //d_theta.data[i].x = orientation;
     }
 
     return stats;
