@@ -16,11 +16,12 @@ class VertexQuadraticEnergyWithTension : public VertexQuadraticEnergy
         //! initialize with random positions and set all cells to have uniform target A_0 and P_0 parameters
         VertexQuadraticEnergyWithTension(int n, double A0, double P0,bool reprod = false, bool runSPVToInitialize=false,bool usegpu = true) : VertexQuadraticEnergy(n,A0,P0,reprod,runSPVToInitialize,usegpu)
                 {
-                gamma = 0;Tension = false;simpleTension = true;GPUcompute = usegpu; forceExponent=1.0;
+                gamma = 0;Tension = false;simpleTension = true;GPUcompute = usegpu; actinStrength=0; forceExponent=1.0;
+
                 if(!GPUcompute)
                     tensionMatrix.neverGPU =true;
                 };
-
+        virtual double2 computedtheta_givencellID(int cellid, double2 vcur);
         //!compute the geometry and get the forces
         virtual void computeForces();
         //!compute the quadratic energy functional
@@ -39,14 +40,20 @@ class VertexQuadraticEnergyWithTension : public VertexQuadraticEnergy
         void setSurfaceTension(vector<double> gammas);
         //!Get surface tension
         double getSurfaceTension(){return gamma;};
-        void setForceExponent(double x){forceExponent = x;};
+
 
         double reportMeanEdgeTension();
+        void setActinStrength(double a){actinStrength = a;};
+        void setForceExponent(double x){forceExponent = x;};
     protected:
         //!The value of surface tension between two cells of different type
         double gamma;
+        // actin strength
+        double actinStrength; 
+
         //exponent of force
         double forceExponent;
+
         //!A flag specifying whether the force calculation contains any surface tensions to compute
         bool Tension;
         //!A flag switching between "simple" tensions (only a single value of gamma for every unlike interaction) or not

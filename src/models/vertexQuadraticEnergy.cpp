@@ -111,6 +111,7 @@ void VertexQuadraticEnergy::computeForcesCPU()
         };
     };
 
+
 /*!
 call kernels to (1) do force sets calculation, then (2) add them up
 */

@@ -49,6 +49,17 @@ void AVMDatabaseNetCDF::SetDimVar()
     BoxMatrixVar = File.add_var("BoxMatrix", ncDouble,recDim, boxDim);
     meanqVar     = File.add_var("meanQ",     ncDouble,recDim, unitDim);
     timeVar      = File.add_var("time",     ncDouble,recDim, unitDim);
+
+    //gammaVar    = File.add_var("gamma",     ncDouble,recDim, unitDim);
+    //alphaVar    = File.add_var("alpha",     ncDouble,recDim, unitDim);
+    KAVar       = File.add_var("KA",     ncDouble,recDim, unitDim);
+    KPVar       = File.add_var("KP",     ncDouble,recDim, unitDim); 
+    cellOrientVar  = File.add_var("cellOrientation",     ncDouble,recDim, nc2Dim);
+    areasVar   = File.add_var("cellArea",     ncDouble,recDim, ncDim);
+    perimeterVar   = File.add_var("cellPerimeter",     ncDouble,recDim, ncDim);
+    areaprefVar   = File.add_var("cellAreaPref",     ncDouble,recDim, ncDim);
+    perimprefVar   = File.add_var("cellPeriPref",     ncDouble,recDim, ncDim);
+
 }
 
 void AVMDatabaseNetCDF::GetDimVar()
@@ -69,6 +80,17 @@ void AVMDatabaseNetCDF::GetDimVar()
     BoxMatrixVar    = File.get_var("BoxMatrix");
     meanqVar  = File.get_var("meanQ");
     timeVar    = File.get_var("time");
+
+    //gammaVar  = File.get_var("gamma");
+    //alphaVar  = File.get_var("alpha");
+    KAVar     = File.get_var("KA");
+    KPVar     = File.get_var("KP");
+    cellOrientVar  = File.get_var("cellOrientation");
+    areasVar  = File.get_var("Area");
+    perimeterVar  = File.get_var("Perimeter");
+    areaprefVar  = File.get_var("AreaPref");
+    perimprefVar  = File.get_var("PeriPref");
+
 }
 
 /*!
@@ -183,6 +205,39 @@ void AVMDatabaseNetCDF::readState(STATE t, int rec, bool geometry)
             }
         };
 
+ 
+    //set the cell orientations
+    cellOrientVar->set_cur(rec);
+    std::vector<double> cellOrientDat(2*Nc,0.0);
+    cellOrientVar->get(&cellOrientDat[0],1, nc2Dim->size());
+    ArrayHandle<double2> h_co(t->theta,access_location::host,access_mode::read);
+    areasVar->set_cur(rec);
+    perimeterVar->set_cur(rec);
+    areaprefVar->set_cur(rec);
+    perimprefVar->set_cur(rec);
+    std::vector<double> areasDat(Nc,0.0);
+    std::vector<double> perimDat(Nc,0.0);
+    std::vector<double> areaprefDat(Nc,0.0);
+    std::vector<double> perimprefDat(Nc,0.0);
+    areasVar->get(&areasDat[0],1, ncDim->size());
+    perimeterVar->get(&perimDat[0],1, ncDim->size());
+    areaprefVar->get(&areaprefDat[0],1, ncDim->size());
+    perimprefVar->get(&perimprefDat[0],1, ncDim->size());
+    ArrayHandle<double2> h_AP(t->AreaPeri,access_location::host,access_mode::read);
+    ArrayHandle<double2> h_APpref(t->AreaPeriPreferences,access_location::host,access_mode::read);
+    
+    for (int cc = 0; cc < Nc; ++cc)
+        {
+        h_co.data[cc].x = cellOrientDat[cc];   
+        h_co.data[cc].y = cellOrientDat[1+cc];
+        h_AP.data[cc].x = areasDat[cc];
+        h_AP.data[cc].y = perimDat[cc];
+        h_APpref.data[cc].x = areaprefDat[cc];
+        h_APpref.data[cc].y = perimprefDat[cc];
+        };
+    
+
+
     if (geometry)
         {
         t->computeGeometryCPU();
@@ -210,6 +265,13 @@ void AVMDatabaseNetCDF::writeState(STATE s, double time, int rec)
     std::vector<int> typedat(Nc);
     std::vector<int> vndat(3*Nv);
     std::vector<int> vcndat(3*Nv);
+
+    std::vector<double> areaDat(Nc);
+    std::vector<double> perimDat(Nc);
+    std::vector<double> areaprefDat(Nc);
+    std::vector<double> perimprefDat(Nc); 
+    std::vector<double> thetadat(2*Nc);
+
     int idx = 0;
 
     ArrayHandle<double2> h_p(s->vertexPositions,access_location::host,access_mode::read);
@@ -218,6 +280,10 @@ void AVMDatabaseNetCDF::writeState(STATE s, double time, int rec)
     ArrayHandle<int> h_vn(s->vertexNeighbors,access_location::host,access_mode::read);
     ArrayHandle<int> h_vcn(s->vertexCellNeighbors,access_location::host,access_mode::read);
     ArrayHandle<int> h_ct(s->cellType,access_location::host,access_mode::read);
+
+    ArrayHandle<double2> h_ctheta(s->theta,access_location::host,access_mode::read);
+    ArrayHandle<double2> h_AP(s->AreaPeri,access_location::host,access_mode::read);
+    ArrayHandle<double2> h_APpref(s->AreaPeriPreferences,access_location::host,access_mode::read);
 
     std::vector<double> cellPosDat(2*Nc);
     s->getCellPositionsCPU();
@@ -229,7 +295,16 @@ void AVMDatabaseNetCDF::writeState(STATE s, double time, int rec)
         typedat[ii] = h_ct.data[pidx];
         cellPosDat[2*ii+0] = h_cpos.data[pidx].x;
         cellPosDat[2*ii+1] = h_cpos.data[pidx].y;
+
+        thetadat[2*ii+0] = h_ctheta.data[pidx].x; //theta 
+        thetadat[2*ii+1] = h_ctheta.data[pidx].y; //theta pref
+        areaDat[ii] = h_AP.data[pidx].x; //area
+        perimDat[ii] = h_AP.data[pidx].y; //perimeter
+        areaprefDat[ii] = h_APpref.data[pidx].x; //area pref
+        perimprefDat[ii] = h_APpref.data[pidx].y; //perimeter pref
         };
+        //area and perimeter
+
     for (int ii = 0; ii < Nv; ++ii)
         {
         int pidx = s->tagToIdxVertex[ii];
@@ -254,9 +329,19 @@ void AVMDatabaseNetCDF::writeState(STATE s, double time, int rec)
         };
 
     double meanq = s->reportq();
+//    double gammaparam = s->reportgamma();
+ //   double alphaparam = s->reportalpha();
+    double areamod = s->KA;
+    double perimmod = s->KP;
+
     //Write all the data
     timeVar     ->put_rec(&time,      rec);
     meanqVar    ->put_rec(&meanq,rec);
+   // gammaVar    ->put_rec(&gammaparam,rec);
+   // alphaVar    ->put_rec(&alphaparam,rec);
+    KAVar       ->put_rec(&areamod,rec);
+    KPVar       ->put_rec(&perimmod,rec);
+
     posVar      ->put_rec(&posdat[0],     rec);
     forceVar    ->put_rec(&forcedat[0],     rec);
     vneighVar   ->put_rec(&vndat[0],      rec);
@@ -265,6 +350,12 @@ void AVMDatabaseNetCDF::writeState(STATE s, double time, int rec)
     BoxMatrixVar->put_rec(&boxdat[0],     rec);
     cellPosVar  ->put_rec(&cellPosDat[0],rec);
     cellTypeVar ->put_rec(&typedat[0],rec);
+    cellOrientVar ->put_rec(&thetadat[0],rec);
+    areasVar ->put_rec(&areaDat[0],rec);
+    perimeterVar ->put_rec(&perimDat[0],rec);
+    areaprefVar ->put_rec(&areaprefDat[0],rec);
+    perimprefVar ->put_rec(&perimprefDat[0],rec);
+
 
     File.sync();
 }

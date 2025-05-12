@@ -30,6 +30,8 @@ class VertexQuadraticEnergy : public vertexModelBase
         void computeForcesCPU();
         //!Compute the geometry (area & perimeter) of the cells on the GPU
         void computeForcesGPU();
+        double reportgamma();
+        double reportalpha();
 
     //be friends with the associated Database class so it can access data to store or read
     friend class AVMDatabaseNetCDF;

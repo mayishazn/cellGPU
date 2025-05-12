@@ -75,13 +75,15 @@ void vertexModelBase::initializeVertexModelBase(int n,bool spvInitialize, bool u
         finishedFlippingEdges.neverGPU = true;
         cellEdgeFlips.neverGPU = true;
         cellSets.neverGPU = true;
+        theta.neverGPU = true; 
         };
     //set number of cells, and call initializer chain
     Ncells=n;
     initializeSimple2DActiveCell(Ncells,GPUcompute);
     //derive the vertices from a voronoi tesselation
     setCellsVoronoiTesselation(spvInitialize);
-
+    //std::cout << "Size of vertexPositions: " << vertexPositions.getNumElements() << std::endl;
+    setCellThetaRandom();
     setT1Threshold(0.01);
     //initializes per-cell lists
     initializeCellSorting();
@@ -122,11 +124,14 @@ void vertexModelBase::enforceTopology()
         //see if vertex motion leads to T1 transitions...ONLY allow one transition per vertex and
         //per cell per timestep
         testAndPerformT1TransitionsGPU();
+        std::vector<std::vector<double>> regionprops = calculateregionprops();
+
         }
     else
         {
         //see if vertex motion leads to T1 transitions
         testAndPerformT1TransitionsCPU();
+        std::vector<std::vector<double>> regionprops = calculateregionprops();
         };
     };
 
@@ -148,7 +153,7 @@ void vertexModelBase::setCellsVoronoiTesselation(bool spvInitialize)
         ForcePtr spv = make_shared<VoronoiQuadraticEnergy>(Ncells,1.0,3.8,Reproducible);
         spv->setCellPreferencesUniform(1.0,3.8);
         spv->setv0Dr(.1,1.0);
-
+        std::cout << "Relaxing Initial Conditions" << std::endl;
         SimulationPtr sim = make_shared<Simulation>();
         sim->setConfiguration(spv);
         sim->addUpdater(spp,spv);
@@ -643,23 +648,61 @@ void vertexModelBase::getCellVertexSetForT1(int vertex1, int vertex2, int4 &cell
     {
     int cell1,cell2,cell3,ctest;
     int vlast, vcur, vnext, cneigh;
+    std::cout << "Attempting T1 for vertex " << vertex1 << "and " << vertex2 << std::endl;
     ArrayHandle<int> h_cv(cellVertices,access_location::host, access_mode::read);
     ArrayHandle<int> h_cvn(cellVertexNum,access_location::host,access_mode::read);
     ArrayHandle<int> h_vcn(vertexCellNeighbors,access_location::host,access_mode::read);
+    ArrayHandle<double2> h_v(vertexPositions,access_location::host,access_mode::read);
+    ArrayHandle<int> h_vn(vertexNeighbors,access_location::host,access_mode::read);
+
+    //std::cout << "Line 655 " << std::endl;
     cell1 = h_vcn.data[3*vertex1];
     cell2 = h_vcn.data[3*vertex1+1];
     cell3 = h_vcn.data[3*vertex1+2];
+    //std::cout << "Line 659 " << std::endl;
     //cell_l doesn't contain vertex 1, so it is the cell neighbor of vertex 2 we haven't found yet
+    int count = 0; 
     for (int ff = 0; ff < 3; ++ff)
         {
         ctest = h_vcn.data[3*vertex2+ff];
         if(ctest != cell1 && ctest != cell2 && ctest != cell3)
             cellSet.w=ctest;
+        else 
+            count += 1;
         };
+        if (count == 3)
+        {
+            throw std::runtime_error("Error: no unique vertex found for 2nd vertex in T1");
+        } 
     //find vertices "c" and "d"
+
+    if (cellSet.w<0||cellSet.w>=cellVertexNum.getNumElements())
+    {
+        std::cout << "Vertex Positions:" << std::endl; 
+        for (int p = 0; p < vertexPositions.getNumElements(); ++p)
+        {
+            std::cout << p << "\t" << h_v.data[p].x << "\t" << h_v.data[p].y << std::endl; 
+        }
+        std::cout << "Vertex Cell Neighbors:" << std::endl; 
+        for (int p = 0; p < vertexCellNeighbors.getNumElements(); ++p)
+        {
+            std::cout << h_vcn.data[p] << std::endl; 
+        }
+        std::cout << "Vertex Vertex Neighbors:" << std::endl; 
+        for (int p = 0; p < vertexNeighbors.getNumElements(); ++p)
+        {
+            std::cout << h_vn.data[p] << std::endl; 
+        }
+    }
+    //std::cout << "cellSet.w = " << cellSet.w << std::endl;
     cneigh = h_cvn.data[cellSet.w];
+    //std::cout << "cneigh = " << cneigh << std::endl;
+    //std::cout << "n_idx(cneigh-2,cellSet.w) = " << n_idx(cneigh-2,cellSet.w) << std::endl;
     vlast = h_cv.data[ n_idx(cneigh-2,cellSet.w) ];
+    //std::cout <<"vlast = " << vlast << std::endl;
     vcur = h_cv.data[ n_idx(cneigh-1,cellSet.w) ];
+    //std::cout << "vcur = " << vcur << std::endl;
+    //std::cout << "Line 672 " << std::endl;
     for (int cn = 0; cn < cneigh; ++cn)
         {
         vnext = h_cv.data[n_idx(cn,cell1)];
@@ -667,11 +710,12 @@ void vertexModelBase::getCellVertexSetForT1(int vertex1, int vertex2, int4 &cell
         vlast = vcur;
         vcur = vnext;
         };
-
+    //std::cout << "Line 680 " << std::endl;
     //classify cell1
     cneigh = h_cvn.data[cell1];
     vlast = h_cv.data[ n_idx(cneigh-2,cell1) ];
     vcur = h_cv.data[ n_idx(cneigh-1,cell1) ];
+    //std::cout << "Line 685 " << std::endl;
     for (int cn = 0; cn < cneigh; ++cn)
         {
         vnext = h_cv.data[n_idx(cn,cell1)];
@@ -679,6 +723,7 @@ void vertexModelBase::getCellVertexSetForT1(int vertex1, int vertex2, int4 &cell
         vlast = vcur;
         vcur = vnext;
         };
+    //std::cout << "Line 693 " << std::endl;
     if(vlast == vertex2)
         cellSet.x = cell1;
     else if(vnext == vertex2)
@@ -687,11 +732,12 @@ void vertexModelBase::getCellVertexSetForT1(int vertex1, int vertex2, int4 &cell
         {
         cellSet.y = cell1;
         };
-
+    //std::cout << "Line 702 " << std::endl;
     //classify cell2
     cneigh = h_cvn.data[cell2];
     vlast = h_cv.data[ n_idx(cneigh-2,cell2) ];
     vcur = h_cv.data[ n_idx(cneigh-1,cell2) ];
+    //std::cout << "Line 707 " << std::endl;
     for (int cn = 0; cn < cneigh; ++cn)
         {
         vnext = h_cv.data[n_idx(cn,cell2)];
@@ -699,6 +745,7 @@ void vertexModelBase::getCellVertexSetForT1(int vertex1, int vertex2, int4 &cell
         vlast = vcur;
         vcur = vnext;
         };
+    //std::cout << "Line 715 " << std::endl;
     if(vlast == vertex2)
         cellSet.x = cell2;
     else if(vnext == vertex2)
@@ -707,11 +754,12 @@ void vertexModelBase::getCellVertexSetForT1(int vertex1, int vertex2, int4 &cell
         {
         cellSet.y = cell2;
         };
-
+    //std::cout << "Line 724 " << std::endl;
     //classify cell3
     cneigh = h_cvn.data[cell3];
     vlast = h_cv.data[ n_idx(cneigh-2,cell3) ];
     vcur = h_cv.data[ n_idx(cneigh-1,cell3) ];
+    //std::cout << "Line 729 " << std::endl;
     for (int cn = 0; cn < cneigh; ++cn)
         {
         vnext = h_cv.data[n_idx(cn,cell3)];
@@ -719,6 +767,7 @@ void vertexModelBase::getCellVertexSetForT1(int vertex1, int vertex2, int4 &cell
         vlast = vcur;
         vcur = vnext;
         };
+    //std::cout << "Line 737 " << std::endl;
     if(vlast == vertex2)
         cellSet.x = cell3;
     else if(vnext == vertex2)
@@ -727,11 +776,12 @@ void vertexModelBase::getCellVertexSetForT1(int vertex1, int vertex2, int4 &cell
         {
         cellSet.y = cell3;
         };
-
+    //std::cout << "Line 746 " << std::endl;
     //get the vertexSet by examining cells j and l
     cneigh = h_cvn.data[cellSet.y];
     vlast = h_cv.data[ n_idx(cneigh-2,cellSet.y) ];
     vcur = h_cv.data[ n_idx(cneigh-1,cellSet.y) ];
+    //std::cout << "Line 751 " << std::endl;
     for (int cn = 0; cn < cneigh; ++cn)
         {
         vnext = h_cv.data[n_idx(cn,cellSet.y)];
@@ -739,11 +789,13 @@ void vertexModelBase::getCellVertexSetForT1(int vertex1, int vertex2, int4 &cell
         vlast = vcur;
         vcur = vnext;
         };
+    //std::cout << "Line 759 " << std::endl;
     vertexSet.x=vlast;
     vertexSet.y=vnext;
     cneigh = h_cvn.data[cellSet.w];
     vlast = h_cv.data[ n_idx(cneigh-2,cellSet.w) ];
     vcur = h_cv.data[ n_idx(cneigh-1,cellSet.w) ];
+    //std::cout << "Line 765 " << std::endl;
     for (int cn = 0; cn < cneigh; ++cn)
         {
         vnext = h_cv.data[n_idx(cn,cellSet.w)];
@@ -751,12 +803,15 @@ void vertexModelBase::getCellVertexSetForT1(int vertex1, int vertex2, int4 &cell
         vlast = vcur;
         vcur = vnext;
         };
+    //std::cout << "Line 767 " << std::endl;
     vertexSet.w=vlast;
     vertexSet.z=vnext;
-
+    //std::cout << "Line 771 " << std::endl;    
     //Does the cell-vertex-neighbor data structure need to be bigger...for safety check all cell-vertex numbers, even if it won't be incremented?
     if(h_cvn.data[cellSet.x] == vertexMax || h_cvn.data[cellSet.y] == vertexMax || h_cvn.data[cellSet.z] == vertexMax || h_cvn.data[cellSet.w] == vertexMax)
-        growList = true;
+        {growList = true;
+        //std::cout << "Line 780 " << std::endl;
+        } 
     };
 
 /*!
